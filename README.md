@@ -2,23 +2,32 @@
 
 Windows PowerShell から実行することで、インストール済みの **Claude Code CLI** と **Codex CLI** のバージョンを確認し、古い場合は最新版を自動でインストールするスクリプトです。
 
-## 概要
+## 特徴
 
-`Update-CLIs.ps1` を実行すると、以下の処理を順に行います。
+- **ワンショット実行** — `.\Update-CLIs.ps1` を叩くだけで両 CLI のチェック・更新が完了
+- **べき等** — 既に最新の場合はスキップ（`-Force` で強制再インストール可）
+- **環境差を吸収** — Claude Code が PATH に無い場合もネイティブインストーラの既定パスを順に探索
+- **見やすい出力** — 色分けされたログと結果サマリ表
+- **CI 連携向けの終了コード** — 成功 / 前提不足 / 更新失敗 で異なる exit code
 
-1. ローカルにインストールされている各 CLI のバージョンを取得
+## 動作フロー
+
+`Update-CLIs.ps1` を実行すると、各 CLI に対して以下を順に行います。
+
+1. ローカルにインストールされている CLI のバージョンを取得
 2. 公開されている最新バージョンを取得
 3. 古ければ最新版へ更新（最新ならスキップ）
-4. 更新後のバージョンを再取得し、結果サマリを表示
+4. 更新後のバージョンを再取得して検証
+5. すべての結果をサマリ表で表示
 
 ## 対象 CLI と更新方法
 
 | CLI | 検出パス | 最新版取得元 | 更新コマンド |
 | --- | --- | --- | --- |
 | Claude Code CLI | `PATH` → `~/.local/bin/claude.exe` → `~/.claude/local/claude.exe` → `%LOCALAPPDATA%\Programs\claude\claude.exe` | `npm view @anthropic-ai/claude-code version` | `claude update`（未インストール時は `https://claude.ai/install.ps1` を実行） |
-| Codex CLI | `PATH` 上の `codex` | `npm view @openai/codex version` | `npm install -g @openai/codex@latest` |
+| Codex CLI | `PATH` 上の `codex`（通常 `%APPDATA%\npm\codex.ps1`） | `npm view @openai/codex version` | `npm install -g @openai/codex@latest` |
 
-> Claude Code のネイティブビルドの最新バージョンは npm 上のメタデータが最も新鮮なため、npm レジストリ経由で取得します。実体は npm パッケージとしてではなく `claude update` で更新されます。
+> Claude Code のネイティブビルドは npm パッケージとして配布されているわけではありませんが、最新バージョン番号は npm レジストリのメタデータが最も新鮮なため、バージョン比較用途で `npm view` を使用しています。実体の更新は組み込みの `claude update` コマンドが行います。
 
 ## 必要要件
 
@@ -52,6 +61,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ## 出力例
 
+### 更新が必要なケース
+
 ```
 ============================================================
  Claude Code CLI
@@ -78,6 +89,17 @@ Claude Code CLI 2.1.145   2.1.145 updated
 Codex CLI       0.132.0   0.132.0 updated
 ```
 
+### 既に最新のケース
+
+```
+============================================================
+ Claude Code CLI
+============================================================
+[INFO ] 現在のバージョン : 2.1.145
+[INFO ] 最新バージョン   : 2.1.145
+[ OK  ] Claude Code CLI は最新です。更新は不要です。
+```
+
 ## 終了コード
 
 | Code | 意味 |
@@ -102,15 +124,37 @@ Codex CLI       0.132.0   0.132.0 updated
 - `Resolve-ClaudePath` — `claude` が PATH に無くてもネイティブインストーラの既定パスを順にチェックします。
 - `Invoke-CliCheck` — 各 CLI に対して「現バージョン取得 → 最新取得 → 比較 → 更新 → 再検証」を共通フローで実行します。
 
-## 既知の注意点
+## トラブルシューティング
 
-- Claude Code のネイティブビルドが `~/.local/bin` に入っている場合、初回はそのパスが `PATH` に登録されていない可能性があります。`claude update` 自体は絶対パスで実行できますが、シェルから `claude` コマンドを直接叩きたい場合は環境変数 `PATH` に `%USERPROFILE%\.local\bin` を追加してください（システムのプロパティ → 環境変数 → ユーザー環境変数の Path を編集）。
-- `npm` がプロキシ下にある環境では、`npm config set proxy` などの設定が事前に必要です。
+### `claude` コマンドが見つからない
+
+ネイティブインストーラで Claude Code を入れた場合、`%USERPROFILE%\.local\bin` が PATH に登録されていないことがあります。本スクリプトは絶対パス経由で動作するので実行自体には影響しませんが、シェルから `claude` を直接呼びたい場合は以下を実施してください。
+
+1. **設定 → システム → バージョン情報 → システムの詳細設定** を開く
+2. **環境変数** → ユーザー環境変数の **Path** を編集
+3. **新規** で `%USERPROFILE%\.local\bin` を追加
+4. ターミナルを再起動
+
+### `npm` がプロキシ環境で失敗する
+
+```powershell
+npm config set proxy http://your-proxy:port
+npm config set https-proxy http://your-proxy:port
+```
+
+### 文字化けする
+
+スクリプトは UTF-8 BOM 付きで保存されています。Windows PowerShell 5.1 / PowerShell 7 のいずれでも日本語が正しく表示されます。もし化ける場合は保存し直す際に BOM が外れていないか確認してください。
 
 ## ファイル構成
 
 ```
 cli-updater/
-├── Update-CLIs.ps1   # 更新スクリプト本体
-└── README.md         # 本ファイル
+├── .gitignore
+├── README.md          # 本ファイル
+└── Update-CLIs.ps1    # 更新スクリプト本体
 ```
+
+## ライセンス
+
+MIT
