@@ -100,10 +100,45 @@ function Get-CodexLatestVersion {
     } catch { return $null }
 }
 
+function Remove-NpmCodexLeftovers {
+    # npm が @openai スコープ配下に残すステージング用一時ディレクトリ
+    # (.codex-XXXX) を掃除する。Windows Defender 等が展開直後の codex.exe を
+    # 一時的にロックし、npm 自身の cleanup が EPERM で失敗して残骸が蓄積する
+    # ため、ロック解放を待ちながらリトライ削除する。
+    $root = try { (& npm root -g 2>$null | Select-Object -First 1) } catch { $null }
+    if ([string]::IsNullOrWhiteSpace($root)) { return }
+    $scope = Join-Path $root.Trim() '@openai'
+    if (-not (Test-Path -LiteralPath $scope)) { return }
+
+    $leftovers = @(Get-ChildItem -LiteralPath $scope -Directory -Filter '.codex-*' -Force -ErrorAction SilentlyContinue)
+    if ($leftovers.Count -eq 0) { return }
+
+    foreach ($dir in $leftovers) {
+        $removed = $false
+        for ($i = 1; $i -le 5 -and -not $removed; $i++) {
+            try {
+                Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction Stop
+                $removed = $true
+            } catch {
+                Start-Sleep -Milliseconds 700
+            }
+        }
+        if (-not $removed) {
+            Write-Warn2 ("残存ステージングを削除できませんでした (次回実行時に再試行されます): {0}" -f $dir.Name)
+        }
+    }
+    Write-Info "npm の一時ステージング残骸を掃除しました。"
+}
+
 function Update-CodexCli {
     Write-Info "npm install -g @openai/codex@latest を実行します..."
-    & npm install -g '@openai/codex@latest'
+    # `npm warn cleanup ... EPERM` は Windows で AV 等が新規 exe を一時ロックする
+    # ために出るだけで、インストール自体は成功する。ログレベルを error に絞って
+    # 警告ノイズを抑制する (成功判定は下の LASTEXITCODE とバージョン再確認で担保)。
+    & npm install -g '@openai/codex@latest' --loglevel=error
     if ($LASTEXITCODE -ne 0) { throw "npm install が失敗しました (exit=$LASTEXITCODE)" }
+    # npm が消し損ねたステージング残骸を掃除する。
+    Remove-NpmCodexLeftovers
 }
 
 function Invoke-CliCheck {
