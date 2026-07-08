@@ -41,6 +41,60 @@ function ConvertTo-VersionObject {
     try { return [version]$m.Value } catch { return $null }
 }
 
+# npm を呼び出し、stdout / stderr / 終了コードを分離して返す。
+# $ErrorActionPreference='Stop' のままだと npm が stderr に 1 行書いた時点で
+# NativeCommandError となり、npm 自体は成功していても失敗扱いになるため、
+# この関数の中だけ 'Continue' に落として自前で終了コードを判定する。
+function Invoke-NpmCapture {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $raw  = & npm @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } catch {
+        return [pscustomobject]@{ ExitCode = -1; StdOut = ''; StdErr = $_.Exception.Message }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+
+    $out = @($raw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+    $err = @($raw | Where-Object { $_ -is  [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() })
+    return [pscustomobject]@{
+        ExitCode = $code
+        StdOut   = ($out -join "`n").Trim()
+        StdErr   = ($err -join "`n").Trim()
+    }
+}
+
+# npm レジストリから最新版を取得する。一時的なネットワーク断を想定して数回リトライし、
+# 失敗した場合は npm が出した実際のメッセージを表示する ($null で握り潰さない)。
+function Get-NpmLatestVersion {
+    param(
+        [Parameter(Mandatory)][string]$Package,
+        [int]$Retries = 3
+    )
+
+    for ($i = 1; $i -le $Retries; $i++) {
+        $r = Invoke-NpmCapture @('view', $Package, 'version')
+        if ($r.ExitCode -eq 0) {
+            $v = ConvertTo-VersionObject $r.StdOut
+            if ($v) { return $v }
+        }
+
+        # npm は原因 (code ENOTFOUND / E404 など) を stderr の先頭に出す。末尾の
+        # "A complete log of this run..." は情報量がないので落とす。
+        $lines  = @($r.StdErr -split "`r?`n" | Where-Object { $_ -and ($_ -notmatch 'A complete log of this run') })
+        $reason = if ($lines) { ($lines | Select-Object -First 2) -join ' / ' }
+                  else        { "npm exit=$($r.ExitCode) / 出力='$($r.StdOut)'" }
+        Write-Warn2 ("npm view {0} に失敗 ({1}/{2}) : {3}" -f $Package, $i, $Retries, $reason)
+
+        if ($i -lt $Retries) { Start-Sleep -Seconds (2 * $i) }
+    }
+    return $null
+}
+
 function Resolve-ClaudePath {
     $cmd = Get-Command claude -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -64,10 +118,7 @@ function Get-ClaudeInstalledVersion {
 
 function Get-ClaudeLatestVersion {
     # ネイティブビルドの最新バージョンは npm 上のメタデータが最も新鮮。
-    try {
-        $latest = & npm view '@anthropic-ai/claude-code' version 2>$null
-        return (ConvertTo-VersionObject $latest)
-    } catch { return $null }
+    return (Get-NpmLatestVersion -Package '@anthropic-ai/claude-code')
 }
 
 function Update-ClaudeCli {
@@ -94,10 +145,7 @@ function Get-CodexInstalledVersion {
 }
 
 function Get-CodexLatestVersion {
-    try {
-        $latest = & npm view '@openai/codex' version 2>$null
-        return (ConvertTo-VersionObject $latest)
-    } catch { return $null }
+    return (Get-NpmLatestVersion -Package '@openai/codex')
 }
 
 function Remove-NpmCodexLeftovers {
@@ -105,7 +153,9 @@ function Remove-NpmCodexLeftovers {
     # (.codex-XXXX) を掃除する。Windows Defender 等が展開直後の codex.exe を
     # 一時的にロックし、npm 自身の cleanup が EPERM で失敗して残骸が蓄積する
     # ため、ロック解放を待ちながらリトライ削除する。
-    $root = try { (& npm root -g 2>$null | Select-Object -First 1) } catch { $null }
+    $r = Invoke-NpmCapture @('root', '-g')
+    if ($r.ExitCode -ne 0) { return }
+    $root = ($r.StdOut -split "`n" | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace($root)) { return }
     $scope = Join-Path $root.Trim() '@openai'
     if (-not (Test-Path -LiteralPath $scope)) { return }
@@ -113,21 +163,35 @@ function Remove-NpmCodexLeftovers {
     $leftovers = @(Get-ChildItem -LiteralPath $scope -Directory -Filter '.codex-*' -Force -ErrorAction SilentlyContinue)
     if ($leftovers.Count -eq 0) { return }
 
+    $removed = @()
+    $failed  = @()
     foreach ($dir in $leftovers) {
-        $removed = $false
-        for ($i = 1; $i -le 5 -and -not $removed; $i++) {
+        $ok = $false
+        for ($i = 1; $i -le 5 -and -not $ok; $i++) {
             try {
                 Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction Stop
-                $removed = $true
+                $ok = $true
             } catch {
                 Start-Sleep -Milliseconds 700
             }
         }
-        if (-not $removed) {
-            Write-Warn2 ("残存ステージングを削除できませんでした (次回実行時に再試行されます): {0}" -f $dir.Name)
+        if ($ok) { $removed += $dir.Name } else { $failed += $dir.Name }
+    }
+
+    if ($removed.Count -gt 0) {
+        Write-Info ("npm の一時ステージング残骸を掃除しました ({0} 件)。" -f $removed.Count)
+    }
+    if ($failed.Count -gt 0) {
+        Write-Warn2 ("残存ステージングを削除できませんでした ({0} 件): {1}" -f $failed.Count, ($failed -join ', '))
+        # 実行中の codex がバイナリを掴んでいると、短いリトライでは絶対に解放されない。
+        # 原因を明示して「codex を閉じてから再実行」に誘導する。
+        $running = @(Get-Process -Name 'codex*' -ErrorAction SilentlyContinue)
+        if ($running.Count -gt 0) {
+            Write-Warn2 ("codex 関連プロセスが {0} 個実行中のためロックされています。終了後に再実行すると削除されます。" -f $running.Count)
+        } else {
+            Write-Warn2 "ウイルス対策ソフトのスキャン等でロックされている可能性があります (次回実行時に再試行されます)。"
         }
     }
-    Write-Info "npm の一時ステージング残骸を掃除しました。"
 }
 
 function Update-CodexCli {
@@ -135,8 +199,12 @@ function Update-CodexCli {
     # `npm warn cleanup ... EPERM` は Windows で AV 等が新規 exe を一時ロックする
     # ために出るだけで、インストール自体は成功する。ログレベルを error に絞って
     # 警告ノイズを抑制する (成功判定は下の LASTEXITCODE とバージョン再確認で担保)。
-    & npm install -g '@openai/codex@latest' --loglevel=error
-    if ($LASTEXITCODE -ne 0) { throw "npm install が失敗しました (exit=$LASTEXITCODE)" }
+    $r = Invoke-NpmCapture @('install', '-g', '@openai/codex@latest', '--loglevel=error')
+    if ($r.StdOut) { Write-Host $r.StdOut }
+    if ($r.ExitCode -ne 0) {
+        if ($r.StdErr) { Write-Host $r.StdErr }
+        throw "npm install が失敗しました (exit=$($r.ExitCode))"
+    }
     # npm が消し損ねたステージング残骸を掃除する。
     Remove-NpmCodexLeftovers
 }
@@ -218,7 +286,7 @@ $results += Invoke-CliCheck `
 Write-Section "結果サマリ"
 $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 
-# 失敗があれば非ゼロで終了
-$hasFailure = $results | Where-Object { $_.Action -in @('failed','verification-failed') }
+# 失敗があれば非ゼロで終了 (skipped = 最新版を取得できず更新判定不能。成功ではない)
+$hasFailure = $results | Where-Object { $_.Action -in @('failed','verification-failed','skipped') }
 if ($hasFailure) { exit 2 }
 exit 0
