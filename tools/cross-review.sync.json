@@ -1,0 +1,42 @@
+{
+  "upstream": {
+    "repo": "https://github.com/ktysne/ai-cross-review.git",
+    "ref": "main"
+  },
+  "lastSyncedCommit": "f3730f9763de3e1debdef3143a944c3f2280d9c5",
+  "excludedFiles": [
+    "tools/cross-review.sync-all.js",
+    ".claude/skills/cross-review/SKILL.md",
+    "tests/cross-review.test.js",
+    "tests/cross-review.sync.test.js",
+    "tests/cross-review.sync-all.test.js"
+  ],
+  "shownMigrations": [
+    "2026-09-global-skill-codex-subagent.md",
+    "2026-09-phase1-review-rules.md",
+    "2026-09-phase2-codex-agent-launch.md",
+    "2026-09-phase3-state-and-diff-guard.md",
+    "2026-09-phase4-pr-comment.md",
+    "2026-09-phase5-global-skill-and-manifest-check.md",
+    "2026-09-review-choice-control.md"
+  ],
+  "files": [
+    {
+      "from": "tools/cross-review.js",
+      "to": "tools/cross-review.js"
+    },
+    {
+      "from": "tools/cross-review.sync.js",
+      "to": "tools/cross-review.sync.js"
+    },
+    {
+      "from": "docs/cross-review.md",
+      "to": "docs/cross-review.md"
+    },
+    {
+      "from": ".cross-review.example.md",
+      "to": ".cross-review.example.md"
+    }
+  ],
+  "lastSyncedRef": "main"
+}

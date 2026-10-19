@@ -9,3 +9,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# ai-cross-review のローカル状態と生成物
+.cross-review-state.json
+.cross-review/
