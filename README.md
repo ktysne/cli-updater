@@ -1,10 +1,10 @@
 # cli-updater
 
-Windows PowerShell から実行することで、インストール済みの **Claude Code CLI** と **Codex CLI** のバージョンを確認し、古い場合は最新版を自動でインストールするスクリプトです。
+Windows PowerShell から実行することで、インストール済みの **Claude Code CLI**、**Codex CLI**、**GitHub CLI** のバージョンを確認し、古い場合は最新版を自動でインストールするスクリプトです。
 
 ## 特徴
 
-- **ワンショット実行** — `.\Update-CLIs.ps1` を叩くだけで両 CLI のチェック・更新が完了
+- **ワンショット実行** — `.\Update-CLIs.ps1` を叩くだけで全 CLI のチェック・更新が完了
 - **べき等** — 既に最新の場合はスキップ（`-Force` で強制再インストール可）
 - **環境差を吸収** — Claude Code が PATH に無い場合もネイティブインストーラの既定パスを順に探索
 - **見やすい出力** — 色分けされたログと結果サマリ表
@@ -26,14 +26,18 @@ Windows PowerShell から実行することで、インストール済みの **C
 | --- | --- | --- | --- |
 | Claude Code CLI | `PATH` → `~/.local/bin/claude.exe` → `~/.claude/local/claude.exe` → `%LOCALAPPDATA%\Programs\claude\claude.exe` | `npm view @anthropic-ai/claude-code version` | `claude update`（未インストール時は `https://claude.ai/install.ps1` を実行） |
 | Codex CLI | `PATH` 上の `codex`（通常 `%APPDATA%\npm\codex.ps1`） | `npm view @openai/codex version` | `npm install -g @openai/codex@latest` |
+| GitHub CLI | `PATH` → MSI が記録する `InstallDir`（通常 `C:\Program Files\GitHub CLI\gh.exe`） | GitHub Releases API（`cli/cli` の latest） | `winget upgrade --id GitHub.cli`（未インストール時は `winget install`） |
 
 > Claude Code のネイティブビルドは npm パッケージとして配布されているわけではありませんが、最新バージョン番号は npm レジストリのメタデータが最も新鮮なため、バージョン比較用途で `npm view` を使用しています。実体の更新は組み込みの `claude update` コマンドが行います。
+
+> GitHub CLI は winget で導入されていることを前提にしています。MSI 版は `Program Files` に入るため、更新時に UAC の確認が表示されることがあります。winget のカタログへの反映は GitHub のリリースより遅れることがあり、その間は `failed` と表示されます。時間をおいて再実行してください。scoop や choco など winget 以外で導入した gh は、導入に使った方法で更新してください。
 
 ## 必要要件
 
 - Windows 10 / 11
 - Windows PowerShell 5.1 または PowerShell 7+
 - Node.js（`npm` コマンドが PATH 上にあること）
+- winget（GitHub CLI の更新に使用。Windows 10 / 11 の App Installer に同梱）
 - インターネット接続
 
 ## 使い方
@@ -81,12 +85,21 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 [ OK  ] Codex CLI を 0.132.0 に更新しました。
 
 ============================================================
+ GitHub CLI
+============================================================
+[INFO ] 現在のバージョン : 2.101.0
+[INFO ] 最新バージョン   : 2.102.0
+[INFO ] winget upgrade --id GitHub.cli を実行します (管理者権限の確認が表示されることがあります)...
+[ OK  ] GitHub CLI を 2.102.0 に更新しました。
+
+============================================================
  結果サマリ
 ============================================================
 Name            Installed Latest  Action
 ----            --------- ------  ------
 Claude Code CLI 2.1.145   2.1.145 updated
 Codex CLI       0.132.0   0.132.0 updated
+GitHub CLI      2.102.0   2.102.0 updated
 ```
 
 ### 既に最新のケース
@@ -116,7 +129,7 @@ Codex CLI       0.132.0   0.132.0 updated
 | `updated` | 更新に成功した |
 | `failed` | 更新コマンドが失敗した |
 | `verification-failed` | 更新後のバージョン確認で最新を確認できなかった |
-| `skipped` | 最新バージョンの取得に失敗（ネットワーク／npm を確認） |
+| `skipped` | 最新バージョンの取得に失敗（ネットワーク／npm／GitHub API を確認） |
 
 ## 仕組み（内部処理）
 
