@@ -26,7 +26,7 @@ Windows PowerShell から実行することで、インストール済みの **C
 | --- | --- | --- | --- |
 | Claude Code CLI | `PATH` → `~/.local/bin/claude.exe` → `~/.claude/local/claude.exe` → `%LOCALAPPDATA%\Programs\claude\claude.exe` | `npm view @anthropic-ai/claude-code version` | `claude update`（未インストール時は `https://claude.ai/install.ps1` を実行） |
 | Codex CLI | `PATH` 上の `codex`（通常 `%APPDATA%\npm\codex.ps1`） | `npm view @openai/codex version` | `npm install -g @openai/codex@latest` |
-| GitHub CLI | `PATH` 上の `gh`（通常 `C:\Program Files\GitHub CLI\gh.exe`） | GitHub Releases API（`cli/cli` の latest） | `winget upgrade --id GitHub.cli`（未インストール時は `winget install`） |
+| GitHub CLI | `PATH` → MSI が記録する `InstallDir`（通常 `C:\Program Files\GitHub CLI\gh.exe`） | GitHub Releases API（`cli/cli` の latest） | `winget upgrade --id GitHub.cli`（未インストール時は `winget install`） |
 
 > Claude Code のネイティブビルドは npm パッケージとして配布されているわけではありませんが、最新バージョン番号は npm レジストリのメタデータが最も新鮮なため、バージョン比較用途で `npm view` を使用しています。実体の更新は組み込みの `claude update` コマンドが行います。
 

@@ -210,12 +210,26 @@ function Update-CodexCli {
     Remove-NpmCodexLeftovers
 }
 
-function Get-GhInstalledVersion {
+# winget での新規導入直後は、このプロセスの PATH に導入先が入っていないため、MSI が記録する InstallDir も探す。
+function Resolve-GhPath {
     $cmd = Get-Command gh -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+    if ($cmd) { return $cmd.Source }
+    foreach ($key in 'HKLM:\SOFTWARE\GitHub\CLI', 'HKCU:\SOFTWARE\GitHub\CLI') {
+        $dir = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).InstallDir
+        if ($dir) {
+            $exe = Join-Path $dir 'gh.exe'
+            if (Test-Path -LiteralPath $exe) { return $exe }
+        }
+    }
+    return $null
+}
+
+function Get-GhInstalledVersion {
+    $path = Resolve-GhPath
+    if (-not $path) { return $null }
     try {
         # 1 行目が "gh version 2.x.y (yyyy-mm-dd)"。日付は x.y.z 形式に一致しないので誤検出しない。
-        $out = & $cmd.Source --version 2>&1 | Out-String
+        $out = & $path --version 2>&1 | Out-String
         return (ConvertTo-VersionObject $out)
     } catch { return $null }
 }
@@ -303,7 +317,8 @@ function Invoke-CliCheck {
     }
 
     try {
-        & $DoUpdate
+        # 更新コマンドの出力を戻り値の結果オブジェクトに混ぜないため、画面へ流す。
+        & $DoUpdate | Out-Host
     } catch {
         Write-Err2 "$Name の更新中にエラー: $($_.Exception.Message)"
         return [pscustomobject]@{ Name=$Name; Installed=$installed; Latest=$latest; Action='failed' }
