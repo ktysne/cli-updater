@@ -1,12 +1,13 @@
 ﻿<#
 .SYNOPSIS
-    Claude Code CLI と Codex CLI のバージョンを確認し、古ければ最新版をインストールする。
+    Claude Code CLI、Codex CLI、GitHub CLI のバージョンを確認し、古ければ最新版をインストールする。
 
 .DESCRIPTION
     - Claude Code: ネイティブインストーラ版 (~/.local/bin/claude.exe) を想定し、
       組み込みの `claude update` で更新する。コマンドが見つからない場合は公式
       インストールスクリプトで新規導入する。
     - Codex CLI: npm グローバルパッケージ `@openai/codex` を `npm install -g` で更新する。
+    - GitHub CLI: 最新版を GitHub Releases (cli/cli) で確認し、winget (`GitHub.cli`) で更新する。
 
 .NOTES
     Windows PowerShell 5.1 / PowerShell 7 双方で動作。
@@ -209,6 +210,71 @@ function Update-CodexCli {
     Remove-NpmCodexLeftovers
 }
 
+function Get-GhInstalledVersion {
+    $cmd = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    try {
+        # 1 行目が "gh version 2.x.y (yyyy-mm-dd)"。日付は x.y.z 形式に一致しないので誤検出しない。
+        $out = & $cmd.Source --version 2>&1 | Out-String
+        return (ConvertTo-VersionObject $out)
+    } catch { return $null }
+}
+
+# GitHub CLI は npm で配布されていないため、GitHub Releases の latest から取得する。
+function Get-GhLatestVersion {
+    param([int]$Retries = 3)
+
+    # Windows PowerShell 5.1 の既定では TLS 1.2 が無効で api.github.com に接続できないため。
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'cli-updater'; 'Accept' = 'application/vnd.github+json' }
+
+    for ($i = 1; $i -le $Retries; $i++) {
+        try {
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/cli/cli/releases/latest' -Headers $headers -UseBasicParsing
+            $v = ConvertTo-VersionObject $rel.tag_name
+            if ($v) { return $v }
+            $reason = "tag_name を解釈できません ('$($rel.tag_name)')"
+        } catch {
+            $reason = $_.Exception.Message
+        }
+        Write-Warn2 ("GitHub Releases (cli/cli) の取得に失敗 ({0}/{1}) : {2}" -f $i, $Retries, $reason)
+        if ($i -lt $Retries) { Start-Sleep -Seconds (2 * $i) }
+    }
+    return $null
+}
+
+function Update-GhCli {
+    param([bool]$IsInstalled)
+
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "winget が見つかりません。App Installer を導入するか、https://cli.github.com/ から手動で更新してください。"
+    }
+
+    $common = @('--id', 'GitHub.cli', '--exact', '--silent', '--disable-interactivity',
+                '--accept-source-agreements', '--accept-package-agreements')
+    # winget upgrade は同じバージョンを入れ直せないため、未導入時と -Force 時は install を使う。
+    $verb = if ($IsInstalled -and -not $Force.IsPresent) { 'upgrade' } else { 'install' }
+    $extra = @(if ($Force.IsPresent) { '--force' })
+
+    Write-Info "winget $verb --id GitHub.cli を実行します (管理者権限の確認が表示されることがあります)..."
+    & winget $verb @common @extra
+    $code = $LASTEXITCODE
+
+    # winget の終了コード: 0x8A15002B = 適用できる更新がない, 0x8A150014 = 該当パッケージが見つからない
+    $UPDATE_NOT_APPLICABLE = -1978335189
+    $NO_APPLICATIONS_FOUND = -1978335212
+    switch ($code) {
+        0 { return }
+        $UPDATE_NOT_APPLICABLE {
+            throw "winget のカタログに最新版がまだ反映されていません。時間をおいて再実行してください。"
+        }
+        $NO_APPLICATIONS_FOUND {
+            throw "gh は winget 以外 (scoop, choco, 手動配置など) で導入されているため更新できません。導入に使った方法で更新してください。"
+        }
+        default { throw ("winget {0} が失敗しました (exit=0x{1:X8})" -f $verb, $code) }
+    }
+}
+
 function Invoke-CliCheck {
     param(
         [string]$Name,
@@ -282,6 +348,13 @@ $results += Invoke-CliCheck `
     -GetInstalled { Get-CodexInstalledVersion } `
     -GetLatest    { Get-CodexLatestVersion } `
     -DoUpdate     { Update-CodexCli }
+
+# GitHub CLI
+$results += Invoke-CliCheck `
+    -Name 'GitHub CLI' `
+    -GetInstalled { Get-GhInstalledVersion } `
+    -GetLatest    { Get-GhLatestVersion } `
+    -DoUpdate     { Update-GhCli -IsInstalled ($null -ne (Get-GhInstalledVersion)) }
 
 Write-Section "結果サマリ"
 $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
