@@ -10,7 +10,7 @@ Codex のホームに配ったグローバル SKILL `cross-review` です。
 - 自動テストはありません。更新処理は実機で `.\Update-CLIs.ps1` を実行して確かめます
 
 ### 基盤の更新
-`node tools/cross-review.sync.js`（検査は `node tools/cross-review.sync.js --check`）で上流から取り込みます。
+`node tools/cross-review.js sync`（検査は `node tools/cross-review.js sync --check`）で上流から取り込みます。
 更新手順は「同期 → 表示された移行ノートの作業 → 上の検証コマンド」の順です。
 package.json が無いので、レビューは `node tools/cross-review.js codex` のように直接実行します。
 
